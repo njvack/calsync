@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# calsync secrets
+client_secret*.json
+*token*.json
+msal_cache.json
+config.toml
