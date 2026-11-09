@@ -1,0 +1,18 @@
+# Copy to ~/.config/calsync/config.toml
+
+[microsoft]
+# Entra admin center > App registrations > your app > Overview
+client_id = "00000000-0000-0000-0000-000000000000"
+tenant_id = "00000000-0000-0000-0000-000000000000"
+
+[google]
+# Google Auth Platform > Clients > your Desktop client > Download JSON
+client_secret_file = "~/.config/calsync/google_client_secret.json"
+calendar_id = "primary"
+
+[sync]
+days_back = 1          # how far back to sync
+days_ahead = 60        # how far ahead to sync
+settle_seconds = 60    # wait this long after an event changes before copying it
+min_prefix = 4         # shortest title allowed to prefix-match a longer one
+private_title = "Busy" # title used for copies of private events
