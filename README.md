@@ -42,6 +42,8 @@ Private events are copied with the title "Busy". If any fetch fails, the run mak
    tail -f ~/Library/Logs/calsync.log
    ```
 
+For testing without launchd, `while ~/bin/calsync.py run; do sleep 90; done` keeps going through network failures (they exit 0), and stops on Ctrl-C or a real error.
+
 To stop: `launchctl bootout gui/$(id -u)/local.calsync`.
 
 To undo everything the script created: `~/bin/calsync.py ours` lists its copies, and `~/bin/calsync.py ours --delete` removes them.

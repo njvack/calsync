@@ -542,8 +542,6 @@ def main() -> None:
             cmd_run(cfg, args.dry_run)
         elif args.cmd == "ours":
             cmd_ours(cfg, args.delete)
-    except KeyboardInterrupt:
-        sys.exit(130)
     except Exception as e:
         if args.debug:
             raise
@@ -568,4 +566,12 @@ def is_transient(e: Exception) -> bool:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        # Exit quietly, but die by SIGINT (not a plain exit code) so a shell
+        # loop running this script stops too.
+        import signal
+
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
