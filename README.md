@@ -48,6 +48,7 @@ To undo everything the script created: `~/bin/calsync.py ours` lists its copies,
 
 ## Notes
 
+- Network failures (timeouts, connection errors, HTTP 429/5xx) are silent and the next run catches up. Add `-v` to log them as one line, or `--debug` for full tracebacks. Other errors, like an expired sign-in or a 403, always log one line.
 - Tokens are stored in `~/.config/calsync/` with mode 600. If Microsoft sign-in expires (your university's policies may force this occasionally), the log says so; rerun `auth`.
 - Old CalendarBridge "Copy" events look like native events to this script, so they suppress copies rather than causing new ones. Remove them when convenient.
 - To catch title variations the prefix rule misses, run `--dry-run` and look for `create` lines that duplicate something already on the other calendar.
