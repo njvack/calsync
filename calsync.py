@@ -47,6 +47,30 @@ GRAPH = "https://graph.microsoft.com/v1.0"
 GCAL = "https://www.googleapis.com/calendar/v3"
 
 
+HTTP_TIMEOUT = (10, 60)  # connect, read seconds
+
+
+class ApiError(Exception):
+    def __init__(self, status: int, msg: str):
+        super().__init__(msg)
+        self.status = status
+
+    @property
+    def transient(self) -> bool:
+        return self.status == 429 or self.status >= 500
+
+
+def http_session():
+    import requests
+
+    class TimeoutSession(requests.Session):
+        def request(self, *args, **kwargs):
+            kwargs.setdefault("timeout", HTTP_TIMEOUT)
+            return super().request(*args, **kwargs)
+
+    return TimeoutSession()
+
+
 def log(msg: str) -> None:
     print(f"{datetime.now().isoformat(timespec='seconds')} {msg}", flush=True)
 
@@ -154,17 +178,20 @@ class Google:
     side = "google"
 
     def __init__(self, cfg: dict):
-        import requests
         from google.auth.transport.requests import Request
+        from google.auth.exceptions import RefreshError
         from google.oauth2.credentials import Credentials
 
         if not GOOGLE_TOKEN.exists():
             sys.exit("Not signed in to Google; run `calsync.py auth`.")
         creds = Credentials.from_authorized_user_file(str(GOOGLE_TOKEN), GOOGLE_SCOPES)
         if not creds.valid:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                sys.exit("Google sign-in expired; run `calsync.py auth --only google`.")
             write_private(GOOGLE_TOKEN, creds.to_json())
-        self.s = requests.Session()
+        self.s = http_session()
         self.s.headers["Authorization"] = f"Bearer {creds.token}"
         self.cal = cfg.get("google", {}).get("calendar_id", "primary")
         self.base = f"{GCAL}/calendars/{self.cal}/events"
@@ -181,7 +208,7 @@ class Google:
 
     def _check(self, r):
         if r.status_code >= 400:
-            raise RuntimeError(f"Google {r.request.method} {r.url}: {r.status_code} {r.text[:500]}")
+            raise ApiError(r.status_code, f"Google {r.request.method} {r.url}: {r.status_code} {r.text[:500]}")
         return r
 
     def list(self, t0: datetime, t1: datetime) -> list[Event]:
@@ -278,15 +305,13 @@ class Outlook:
     side = "outlook"
 
     def __init__(self, cfg: dict):
-        import requests
-
         app, cache = _msal_app(cfg)
         accounts = app.get_accounts()
         result = app.acquire_token_silent(MS_SCOPES, account=accounts[0]) if accounts else None
         _save_cache(cache)
         if not result or "access_token" not in result:
             sys.exit("Microsoft sign-in expired or missing; run `calsync.py auth`.")
-        self.s = requests.Session()
+        self.s = http_session()
         self.s.headers["Authorization"] = f"Bearer {result['access_token']}"
         self.s.headers["Prefer"] = 'outlook.timezone="UTC"'
         self._mailbox_tz = None
@@ -309,7 +334,7 @@ class Outlook:
 
     def _check(self, r):
         if r.status_code >= 400:
-            raise RuntimeError(f"Graph {r.request.method} {r.url}: {r.status_code} {r.text[:500]}")
+            raise ApiError(r.status_code, f"Graph {r.request.method} {r.url}: {r.status_code} {r.text[:500]}")
         return r
 
     @property
@@ -500,18 +525,46 @@ def main() -> None:
     r.add_argument("--dry-run", action="store_true")
     o = sub.add_parser("ours", help="list copies this script created")
     o.add_argument("--delete", action="store_true", help="delete them all (undo)")
+    for sp in (a, r, o):
+        sp.add_argument("-v", "--verbose", action="store_true",
+                        help="report network failures (silent by default)")
+        sp.add_argument("--debug", action="store_true", help="show full tracebacks")
     args = p.parse_args()
 
     cfg = load_config()
-    if args.cmd == "auth":
-        if args.only != "microsoft":
-            Google.login(cfg)
-        if args.only != "google":
-            Outlook.login(cfg, device=args.device)
-    elif args.cmd == "run":
-        cmd_run(cfg, args.dry_run)
-    elif args.cmd == "ours":
-        cmd_ours(cfg, args.delete)
+    try:
+        if args.cmd == "auth":
+            if args.only != "microsoft":
+                Google.login(cfg)
+            if args.only != "google":
+                Outlook.login(cfg, device=args.device)
+        elif args.cmd == "run":
+            cmd_run(cfg, args.dry_run)
+        elif args.cmd == "ours":
+            cmd_ours(cfg, args.delete)
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except Exception as e:
+        if args.debug:
+            raise
+        if is_transient(e):
+            # Networks flake; the next run will catch up. Nothing was changed
+            # unless the failure hit partway through applying actions, and the
+            # next pass reconciles that too.
+            if args.verbose:
+                log(f"skipped: {type(e).__name__}: {e}")
+            sys.exit(0)
+        log(f"error: {type(e).__name__}: {e}")
+        sys.exit(1)
+
+
+def is_transient(e: Exception) -> bool:
+    import requests
+    from google.auth.exceptions import TransportError
+
+    if isinstance(e, ApiError):
+        return e.transient
+    return isinstance(e, (requests.ConnectionError, requests.Timeout, TransportError))
 
 
 if __name__ == "__main__":
